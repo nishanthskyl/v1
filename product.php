@@ -15,9 +15,52 @@ $product = $pdo->prepare("SELECT p.*, c.name as category_name, parent.name as pa
 $product->execute([$productId]);
 $product = $product->fetch(PDO::FETCH_ASSOC);
 
-if (!$product) {
+if (!$product) { // Correct placement of the check
     header("Location: index.php");
     exit();
+}
+
+// Fetch product images
+$stmtImages = $pdo->prepare("
+    SELECT *
+    FROM product_images
+    WHERE product_id = ?
+    ORDER BY display_order ASC, is_primary DESC
+");
+$stmtImages->execute([$productId]);
+$productImages = $stmtImages->fetchAll(PDO::FETCH_ASSOC);
+
+// Determine the main image
+$mainProductImage = null;
+$mainProductImageSrc = 'uploads/placeholder.png'; // Default placeholder
+
+if (!empty($productImages)) {
+    foreach ($productImages as $img) {
+        if ($img['is_primary']) {
+            $mainProductImage = $img;
+            break;
+        }
+    }
+    if (!$mainProductImage && count($productImages) > 0) {
+        $mainProductImage = $productImages[0];
+    }
+    if ($mainProductImage) {
+        // Ensure image_path is prefixed with 'uploads/' if it's not already a full path or placeholder
+        $imagePath = $mainProductImage['image_path'];
+        if (!preg_match('/^(uploads\/|http:\/\/|https:\/\/)/', $imagePath) && $imagePath !== 'uploads/placeholder.png') {
+            $mainProductImageSrc = 'uploads/' . htmlspecialchars($imagePath);
+        } else {
+            $mainProductImageSrc = htmlspecialchars($imagePath);
+        }
+    }
+} elseif (isset($product['image_path']) && !empty($product['image_path'])) {
+    // Fallback for old image_path, ensure 'uploads/' prefix
+    $imagePath = $product['image_path'];
+     if (!preg_match('/^(uploads\/|http:\/\/|https:\/\/)/', $imagePath) && $imagePath !== 'uploads/placeholder.png') {
+        $mainProductImageSrc = 'uploads/' . htmlspecialchars($imagePath);
+    } else {
+        $mainProductImageSrc = htmlspecialchars($imagePath);
+    }
 }
 
 // Get all options assigned to this product
@@ -34,7 +77,7 @@ $options = $options->fetchAll(PDO::FETCH_ASSOC);
 // Get values for each option, considering product-specific settings
 foreach ($options as &$option) {
     $stmtValues = $pdo->prepare("
-        SELECT ov.*
+        SELECT ov.*, ov.price_modifier
         FROM option_values ov
         LEFT JOIN product_option_value_settings povs ON ov.id = povs.option_value_id AND povs.product_id = :product_id
         WHERE ov.option_id = :option_id
@@ -387,6 +430,20 @@ unset($option); // release the reference
             -webkit-box-orient: vertical;
             max-height: 4.5em;
         }
+
+        /* Product Thumbnails */
+        .product-thumbnails .img-thumbnail {
+            border: 2px solid transparent;
+            transition: border-color 0.2s ease;
+            width: 80px; /* Default size */
+            height: 80px; /* Default size */
+            object-fit: cover;
+            cursor: pointer;
+        }
+        .product-thumbnails .img-thumbnail:hover,
+        .product-thumbnails .img-thumbnail.active-thumb {
+            border-color: var(--primary-brown);
+        }
     </style>
 </head>
 <body>
@@ -429,15 +486,35 @@ unset($option); // release the reference
                             </ol>
                         </nav>
                         
-                        <!-- Product Image -->
-                        <img src="<?= htmlspecialchars($product['image_path']) ?>" class="img-fluid product-image" alt="<?= htmlspecialchars($product['name']) ?>">
+                        <!-- Main Product Image -->
+                        <img id="mainProductImage" src="<?= $mainProductImageSrc ?>" class="img-fluid product-image mb-3" alt="<?= htmlspecialchars($product['name']) ?>" style="max-height: 500px; width: 100%; object-fit: cover;">
+
+                        <!-- Product Thumbnails -->
+                        <?php if (!empty($productImages) && count($productImages) > 1): ?>
+                        <div class="product-thumbnails d-flex flex-wrap gap-2 justify-content-center mt-2">
+                            <?php foreach ($productImages as $thumbImage): ?>
+                                <?php
+                                    $thumbImageSrc = $thumbImage['image_path'];
+                                    if (!preg_match('/^(uploads\/|http:\/\/|https:\/\/)/', $thumbImageSrc) && $thumbImageSrc !== 'uploads/placeholder.png') {
+                                        $thumbImageSrc = 'uploads/' . htmlspecialchars($thumbImageSrc);
+                                    } else {
+                                        $thumbImageSrc = htmlspecialchars($thumbImageSrc);
+                                    }
+                                ?>
+                                <img src="<?= $thumbImageSrc ?>"
+                                     class="img-thumbnail product-thumbnail-item <?= ($mainProductImage && $mainProductImage['id'] == $thumbImage['id']) ? 'active-thumb' : '' ?>"
+                                     data-large-src="<?= $thumbImageSrc ?>"
+                                     alt="Thumbnail for <?= htmlspecialchars($product['name']) ?>">
+                            <?php endforeach; ?>
+                        </div>
+                        <?php endif; ?>
                     </div>
                     
                     <div class="col-lg-6">
                         <!-- Product Info -->
                         <h1 class="product-title"><?= htmlspecialchars($product['name']) ?></h1>
                         <p class="product-category"><?= htmlspecialchars($product['parent_category'] ?? '') ?> <?= !empty($product['parent_category']) ? '>' : '' ?> <?= htmlspecialchars($product['category_name']) ?></p>
-                        <div class="product-price">₹<?= number_format($product['price'], 2) ?></div>
+                        <div id="displayedProductPrice" class="product-price" data-base-price="<?= htmlspecialchars($product['price']) ?>">₹<?= number_format($product['price'], 2) ?></div>
                         <div id="productDescriptionArea" class="product-description"><?= htmlspecialchars($product['description']) ?></div>
 
                         <!-- Product Options Form -->
@@ -466,7 +543,7 @@ unset($option); // release the reference
                                 if (!empty($currentOption['values']) && is_array($currentOption['values'])) {
                                     foreach ($currentOption['values'] as $v_idx => $value_obj) {
                                         echo "<div class='selectable-box-item'>";
-                                        echo "<input class='form-check-input option-radio visually-hidden' type='radio' name='option_{$currentOption['id']}' id='option_{$currentOption['id']}_{$value_obj['id']}' value='" . htmlspecialchars($value_obj['value']) . "' data-option-name='" . htmlspecialchars($currentOption['option_name']) . "'" . ($v_idx === 0 ? ' checked' : '') . ">";
+                                        echo "<input class='form-check-input option-radio visually-hidden option-input' type='radio' name='option_{$currentOption['id']}' id='option_{$currentOption['id']}_{$value_obj['id']}' value='" . htmlspecialchars($value_obj['value']) . "' data-option-name='" . htmlspecialchars($currentOption['option_name']) . "' data-price-modifier='" . htmlspecialchars($value_obj['price_modifier'] ?? '0.00') . "'" . ($v_idx === 0 ? ' checked' : '') . ">";
                                         echo "<label class='selectable-box-label' for='option_{$currentOption['id']}_{$value_obj['id']}'>" . htmlspecialchars($value_obj['value']) . "</label>";
                                         echo "</div>";
                                     }
@@ -482,15 +559,16 @@ unset($option); // release the reference
                             if ($sizeOptionData) {
                                 echo "<div class='option-section'>";
                                 echo "<h5 class='option-title'>" . htmlspecialchars($sizeOptionData['option_name']) . "</h5>";
-                                echo "<select class='form-select option-select' name='option_{$sizeOptionData['id']}' data-option-name='" . htmlspecialchars($sizeOptionData['option_name']) . "'>";
+                                // Added 'option-input' class to select for price calculation
+                                echo "<select class='form-select option-select option-input' name='option_{$sizeOptionData['id']}' data-option-name='" . htmlspecialchars($sizeOptionData['option_name']) . "'>";
                                 
                                 if (!empty($sizeOptionData['values']) && is_array($sizeOptionData['values'])) {
                                     foreach ($sizeOptionData['values'] as $value_idx => $value_obj) {
                                         $displayValue = htmlspecialchars($value_obj['value']);
-                                        echo "<option value='{$displayValue}'>" . $displayValue . "</option>";
+                                        echo "<option value='{$displayValue}' data-price-modifier='" . htmlspecialchars($value_obj['price_modifier'] ?? '0.00') . "'>" . $displayValue . "</option>";
                                     }
                                 } else {
-                                    echo "<option value=''>N/A</option>";
+                                    echo "<option value='' data-price-modifier='0.00'>N/A</option>";
                                 }
                                 
                                 echo "</select>";
@@ -508,7 +586,7 @@ unset($option); // release the reference
                                 if (!empty($currentOption['values']) && is_array($currentOption['values'])) {
                                     foreach ($currentOption['values'] as $v_idx => $value_obj) {
                                         echo "<div class='selectable-box-item'>";
-                                        echo "<input class='form-check-input option-radio visually-hidden' type='radio' name='option_{$currentOption['id']}' id='option_{$currentOption['id']}_{$value_obj['id']}' value='" . htmlspecialchars($value_obj['value']) . "' data-option-name='" . htmlspecialchars($currentOption['option_name']) . "'" . ($v_idx === 0 ? ' checked' : '') . ">";
+                                        echo "<input class='form-check-input option-radio visually-hidden option-input' type='radio' name='option_{$currentOption['id']}' id='option_{$currentOption['id']}_{$value_obj['id']}' value='" . htmlspecialchars($value_obj['value']) . "' data-option-name='" . htmlspecialchars($currentOption['option_name']) . "' data-price-modifier='" . htmlspecialchars($value_obj['price_modifier'] ?? '0.00') . "'" . ($v_idx === 0 ? ' checked' : '') . ">";
                                         echo "<label class='selectable-box-label' for='option_{$currentOption['id']}_{$value_obj['id']}'>" . htmlspecialchars($value_obj['value']) . "</label>";
                                         echo "</div>";
                                     }
@@ -528,7 +606,7 @@ unset($option); // release the reference
                                 if (!empty($currentOption['values']) && is_array($currentOption['values'])) {
                                     foreach ($currentOption['values'] as $v_idx => $value_obj) {
                                         echo "<div class='selectable-box-item'>";
-                                        echo "<input class='form-check-input option-radio visually-hidden' type='radio' name='option_{$currentOption['id']}' id='option_{$currentOption['id']}_{$value_obj['id']}' value='" . htmlspecialchars($value_obj['value']) . "' data-option-name='" . htmlspecialchars($currentOption['option_name']) . "'" . ($v_idx === 0 ? ' checked' : '') . ">";
+                                        echo "<input class='form-check-input option-radio visually-hidden option-input' type='radio' name='option_{$currentOption['id']}' id='option_{$currentOption['id']}_{$value_obj['id']}' value='" . htmlspecialchars($value_obj['value']) . "' data-option-name='" . htmlspecialchars($currentOption['option_name']) . "' data-price-modifier='" . htmlspecialchars($value_obj['price_modifier'] ?? '0.00') . "'" . ($v_idx === 0 ? ' checked' : '') . ">";
                                         echo "<label class='selectable-box-label' for='option_{$currentOption['id']}_{$value_obj['id']}'>" . htmlspecialchars($value_obj['value']) . "</label>";
                                         echo "</div>";
                                     }
@@ -548,7 +626,7 @@ unset($option); // release the reference
                                 if (!empty($currentOption['values']) && is_array($currentOption['values'])) {
                                     foreach ($currentOption['values'] as $v_idx => $value_obj) {
                                         echo "<div class='selectable-box-item'>";
-                                        echo "<input class='form-check-input option-radio visually-hidden' type='radio' name='option_{$currentOption['id']}' id='option_{$currentOption['id']}_{$value_obj['id']}' value='" . htmlspecialchars($value_obj['value']) . "' data-option-name='" . htmlspecialchars($currentOption['option_name']) . "'" . ($v_idx === 0 ? ' checked' : '') . ">";
+                                        echo "<input class='form-check-input option-radio visually-hidden option-input' type='radio' name='option_{$currentOption['id']}' id='option_{$currentOption['id']}_{$value_obj['id']}' value='" . htmlspecialchars($value_obj['value']) . "' data-option-name='" . htmlspecialchars($currentOption['option_name']) . "' data-price-modifier='" . htmlspecialchars($value_obj['price_modifier'] ?? '0.00') . "'" . ($v_idx === 0 ? ' checked' : '') . ">";
                                         echo "<label class='selectable-box-label' for='option_{$currentOption['id']}_{$value_obj['id']}'>" . htmlspecialchars($value_obj['value']) . "</label>";
                                         echo "</div>";
                                     }
@@ -609,16 +687,16 @@ unset($option); // release the reference
                                                     <div class="selectable-box-group">
                                                         <?php foreach ($option['values'] as $value): ?>
                                                             <div class="selectable-box-item">
-                                                                <input class="form-check-input option-checkbox visually-hidden" type="checkbox" name="option_<?= $option['id'] ?>[]" id="option_<?= $option['id'] ?>_<?= $value['id'] ?>" value="<?= htmlspecialchars($value['value']) ?>" data-option-name="<?= htmlspecialchars($option['option_name']) ?>">
+                                                                <input class="form-check-input option-checkbox visually-hidden option-input" type="checkbox" name="option_<?= $option['id'] ?>[]" id="option_<?= $option['id'] ?>_<?= $value['id'] ?>" value="<?= htmlspecialchars($value['value']) ?>" data-option-name="<?= htmlspecialchars($option['option_name']) ?>" data-price-modifier="<?= htmlspecialchars($value['price_modifier'] ?? '0.00') ?>">
                                                                 <label class="selectable-box-label" for="option_<?= $option['id'] ?>_<?= $value['id'] ?>"><?= htmlspecialchars($value['value']) ?></label>
                                                             </div>
                                                         <?php endforeach; ?>
                                                     </div>
-                                                <?php else: ?>
+                                                <?php else: /* Assuming other types like radio for 'Other Options' if not checkbox */ ?>
                                                     <div class="selectable-box-group">
                                                         <?php foreach ($option['values'] as $v_idx => $value_obj): ?>
                                                             <div class="selectable-box-item">
-                                                                <input class="form-check-input option-radio visually-hidden" type="radio" name="option_<?= $option['id'] ?>" id="option_<?= $option['id'] ?>_<?= $value_obj['id'] ?>" value="<?= htmlspecialchars($value_obj['value']) ?>" data-option-name="<?= htmlspecialchars($option['option_name']) ?>" <?= ($v_idx === 0 ? 'checked' : '') ?>>
+                                                                <input class="form-check-input option-radio visually-hidden option-input" type="radio" name="option_<?= $option['id'] ?>" id="option_<?= $option['id'] ?>_<?= $value_obj['id'] ?>" value="<?= htmlspecialchars($value_obj['value']) ?>" data-option-name="<?= htmlspecialchars($option['option_name']) ?>" data-price-modifier="<?= htmlspecialchars($value_obj['price_modifier'] ?? '0.00') ?>" <?= ($v_idx === 0 ? 'checked' : '') ?>>
                                                                 <label class="selectable-box-label" for="option_<?= $option['id'] ?>_<?= $value_obj['id'] ?>"><?= htmlspecialchars($value_obj['value']) ?></label>
                                                             </div>
                                                         <?php endforeach; ?>
@@ -645,41 +723,135 @@ unset($option); // release the reference
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        const productImagePath = '<?= addslashes(htmlspecialchars($product['image_path'])) ?>';
+        // The old productImagePath and productImageUrl logic is no longer needed here directly,
+        // as image paths are handled by PHP and the new thumbnail JS.
+        // We can remove it or keep it if other parts of JS still use productImageUrl (unlikely for this specific feature).
+        // For now, let's comment it out to avoid conflicts.
+        /*
+        const productImagePath = '<?= isset($product['image_path']) ? addslashes(htmlspecialchars($product['image_path'])) : '' ?>';
         let productImageUrl = '';
         if (productImagePath) {
             if (productImagePath.startsWith('http://') || productImagePath.startsWith('https://')) {
                 productImageUrl = productImagePath;
+            } else if (productImagePath === 'uploads/placeholder.png') {
+                 productImageUrl = window.location.origin + '/' + productImagePath;
             } else {
                 const cleanPath = productImagePath.startsWith('/') ? productImagePath.substring(1) : productImagePath;
-                productImageUrl = window.location.origin + '/' + cleanPath;
+                // Ensure 'uploads/' is part of the path if it's a relative local path
+                if (!cleanPath.startsWith('uploads/')) {
+                     productImageUrl = window.location.origin + '/uploads/' + cleanPath;
+                } else {
+                     productImageUrl = window.location.origin + '/' + cleanPath;
+                }
             }
         }
+        */
     </script>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
-            const frameRadioButtons = document.querySelectorAll('input[type="radio"][data-option-name="Frame"]');
+            const basePrice = parseFloat(document.getElementById('displayedProductPrice')?.dataset.basePrice || 0);
+            const displayedPriceElement = document.getElementById('displayedProductPrice');
+
+            function updateTotalPrice() {
+                let currentTotalPrice = basePrice;
+
+                // Process all inputs with class 'option-input'
+                document.querySelectorAll('.option-input').forEach(input => {
+                    if (input.type === 'radio' && input.checked) {
+                        currentTotalPrice += parseFloat(input.dataset.priceModifier || 0);
+                    } else if (input.type === 'checkbox' && input.checked) {
+                        currentTotalPrice += parseFloat(input.dataset.priceModifier || 0);
+                    } else if (input.tagName.toLowerCase() === 'select') {
+                        const selectedOptionTag = input.options[input.selectedIndex];
+                        if (selectedOptionTag) {
+                            currentTotalPrice += parseFloat(selectedOptionTag.dataset.priceModifier || 0);
+                        }
+                    }
+                });
+
+                if (displayedPriceElement) {
+                    displayedPriceElement.textContent = `₹${currentTotalPrice.toFixed(2)}`;
+                }
+            }
+
+            function attachOptionEventListeners() {
+                // Remove existing listeners first to prevent duplicates if called multiple times
+                const allOptionInputs = document.querySelectorAll('.option-input');
+                allOptionInputs.forEach(input => {
+                    input.removeEventListener('change', updateTotalPrice);
+                    input.addEventListener('change', updateTotalPrice);
+                });
+            }
+
+            attachOptionEventListeners(); // Attach to initially loaded options
+
+            // Thumbnail click logic
+            const mainImage = document.getElementById('mainProductImage');
+            const thumbnails = document.querySelectorAll('.product-thumbnail-item');
+            thumbnails.forEach(thumb => {
+                thumb.addEventListener('click', function() {
+                    if(mainImage) {
+                        mainImage.src = this.dataset.largeSrc;
+                    }
+                    thumbnails.forEach(t => t.classList.remove('active-thumb'));
+                    this.classList.add('active-thumb');
+                });
+            });
+
+            // Description toggle logic
+            const descriptionArea = document.getElementById('productDescriptionArea');
+            if (descriptionArea) {
+                // Simplified toggle logic from before
+                const initialMaxHeight = 60; // Approx 3-4 lines
+                descriptionArea.style.maxHeight = `${initialMaxHeight}px`;
+                descriptionArea.style.overflow = 'hidden';
+
+                if (descriptionArea.scrollHeight > initialMaxHeight) {
+                    const toggleLink = document.createElement('a');
+                    toggleLink.href = '#';
+                    toggleLink.classList.add('description-toggle');
+                    toggleLink.textContent = 'Show more';
+                    descriptionArea.parentNode.insertBefore(toggleLink, descriptionArea.nextSibling);
+
+                    toggleLink.addEventListener('click', function(event) {
+                        event.preventDefault();
+                        const isTruncated = descriptionArea.style.maxHeight === `${initialMaxHeight}px`;
+                        if (isTruncated) {
+                            descriptionArea.style.maxHeight = `${descriptionArea.scrollHeight}px`;
+                            this.textContent = 'Show less';
+                        } else {
+                            descriptionArea.style.maxHeight = `${initialMaxHeight}px`;
+                            this.textContent = 'Show more';
+                        }
+                    });
+                } else {
+                     descriptionArea.style.maxHeight = 'none'; // Not overflowing, show all
+                     descriptionArea.style.overflow = 'visible';
+                }
+            }
+
+            const frameRadioButtons = document.querySelectorAll('input[type="radio"][data-option-name="Frame"].option-input');
             const dynamicDropdownContainer = document.getElementById('dynamicFrameSizeDropdownContainer');
 
+            // Price modifiers for dynamic options (defaults, as they are not in DB)
             const woodSizes = [
-                { value: "6x6", text: "6x6" }, { value: "8x8", text: "8x8" },
-                { value: "10x10", text: "10x10" }, { value: "10x12", text: "10x12" },
-                { value: "12x12", text: "12x12" }, { value: "12x14", text: "12x14" },
-                { value: "14x16", text: "14x16" }, { value: "Customized size", text: "Customized size" }
+                { value: "6x6", text: "6x6", price_modifier: "0.00" }, { value: "8x8", text: "8x8", price_modifier: "0.00" },
+                { value: "10x10", text: "10x10", price_modifier: "0.00" }, { value: "10x12", text: "10x12", price_modifier: "0.00" },
+                { value: "12x12", text: "12x12", price_modifier: "0.00" }, { value: "12x14", text: "12x14", price_modifier: "0.00" },
+                { value: "14x16", text: "14x16", price_modifier: "0.00" }, { value: "Customized size", text: "Customized size", price_modifier: "0.00" }
             ];
             const mouldSizes = [
-                { value: "4", text: "4 inch" }, { value: "5", text: "5 inch" }, 
-                { value: "6", text: "6 inch" }, { value: "8", text: "8 inch" },
-                { value: "10", text: "10 inch" }, { value: "12", text: "12 inch" }
+                { value: "4", text: "4 inch", price_modifier: "0.00" }, { value: "5", text: "5 inch", price_modifier: "0.00" },
+                { value: "6", text: "6 inch", price_modifier: "0.00" }, { value: "8", text: "8 inch", price_modifier: "0.00" },
+                { value: "10", text: "10 inch", price_modifier: "0.00" }, { value: "12", text: "12 inch", price_modifier: "0.00" }
             ];
 
             function updateFrameSizeDropdown(selectedValue) {
-                if (!dynamicDropdownContainer) return; // Safety check
+                if (!dynamicDropdownContainer) return;
 
-                dynamicDropdownContainer.innerHTML = ''; // Clear previous content
-                dynamicDropdownContainer.style.display = 'none'; // Hide by default
+                dynamicDropdownContainer.innerHTML = '';
+                dynamicDropdownContainer.style.display = 'none';
 
-                let dropdownHtml = '';
                 let optionsArray = [];
                 let selectName = '';
                 let selectLabel = '';
@@ -695,16 +867,25 @@ unset($option); // release the reference
                 }
 
                 if (selectName && optionsArray.length > 0) {
-                    dropdownHtml = `<h5>${selectLabel}</h5><div class="form-group">` +
-                                   `<select class="form-select option-select" name="${selectName}" data-option-name="${selectLabel}">`;
+                    let dropdownHtml = `<h5>${selectLabel}</h5><div class="form-group">` +
+                                   // Added 'option-input' class for price calculation
+                                   `<select class="form-select option-select option-input" name="${selectName}" data-option-name="${selectLabel}">`;
                     optionsArray.forEach(opt => {
-                        dropdownHtml += `<option value="${opt.value}">${opt.text}</option>`;
+                        dropdownHtml += `<option value="${opt.value}" data-price-modifier="${opt.price_modifier || '0.00'}">${opt.text}</option>`;
                     });
                     dropdownHtml += `</select></div>`;
                     
                     dynamicDropdownContainer.innerHTML = dropdownHtml;
                     dynamicDropdownContainer.style.display = 'block';
-                }
+
+                    // Re-attach listener to the new select
+                    const newSelect = dynamicDropdownContainer.querySelector('.option-input');
+                    if (newSelect) {
+                        newSelect.removeEventListener('change', updateTotalPrice); // Just in case
+                        newSelect.addEventListener('change', updateTotalPrice);
+                    }
+                 }
+                 updateTotalPrice(); // Update price when dropdown changes or is removed
             }
 
             frameRadioButtons.forEach(radio => {
@@ -713,13 +894,11 @@ unset($option); // release the reference
                 });
             });
 
-            // Trigger update on page load based on the initially checked "Frame" radio
-            const initiallyCheckedFrameRadio = document.querySelector('input[type="radio"][data-option-name="Frame"]:checked');
+            const initiallyCheckedFrameRadio = document.querySelector('input[type="radio"][data-option-name="Frame"].option-input:checked');
             if (initiallyCheckedFrameRadio) {
                 updateFrameSizeDropdown(initiallyCheckedFrameRadio.value);
             }
             
-            // Set up WhatsApp button
             const newWhatsAppBtn = document.getElementById('newWhatsAppBtn'); 
             if (newWhatsAppBtn) { 
                 newWhatsAppBtn.addEventListener('click', function(e) {
@@ -727,131 +906,60 @@ unset($option); // release the reference
                     
                     const productName = "<?= addslashes(htmlspecialchars($product['name'])) ?>";
                     const categoryName = "<?= addslashes(htmlspecialchars($product['category_name'])) ?>";
-                    const productPrice = "<?= addslashes(htmlspecialchars(number_format($product['price'], 2))) ?>";
+                    const currentPriceText = displayedPriceElement ? displayedPriceElement.textContent : `₹${basePrice.toFixed(2)}`;
+
+                    let currentMainImageSrc = '';
+                    const mainImgElement = document.getElementById('mainProductImage');
+                    if (mainImgElement && mainImgElement.src) {
+                        currentMainImageSrc = mainImgElement.src;
+                    }
 
                     let message = `Hi,\nI'm interested in purchasing the following product:\n\n`; 
                     message += `*Product Name:* ${productName}\n`; 
                     message += `*Category:* ${categoryName}\n`;
                     
-                    if (typeof productImageUrl !== 'undefined' && productImageUrl) { 
-                        message += `*Product Image:* ${productImageUrl}\n`;
+                    if (currentMainImageSrc) {
+                        message += `*Product Image:* ${currentMainImageSrc}\n`;
                     }
                     message += `\n--- Options Selected ---\n`;
 
-                    const optionsOrder = [
-                        { name: 'Shape', type: 'radio' },
-                        { name: 'Size', type: 'select' },
-                        { name: 'Color', type: 'radio' },
-                        { name: 'Light', type: 'radio' },
-                        { name: 'Frame', type: 'radio' }
-                        // Dynamic Wood/Mould size will be handled separately
-                    ];
+                    const processedOptionNames = new Set(); // Use a Set for better tracking
 
-                    const processedOptionNames = []; // Keep track of options already added
-
-                    optionsOrder.forEach(optConfig => {
-                        let element;
+                    // Iterate over all .option-input elements to gather selected options
+                    document.querySelectorAll('.option-input').forEach(input => {
+                        const optionName = input.dataset.optionName;
                         let value = '';
-                        let optionDisplayName = optConfig.name; // Default to config name
+                        let isSelected = false;
 
-                        if (optConfig.type === 'radio') {
-                            element = document.querySelector(`input[type="radio"][data-option-name="${optConfig.name}"]:checked`);
-                            if (element) {
-                                value = element.value;
-                                optionDisplayName = element.dataset.optionName; // Get actual name from data attribute
+                        if (input.type === 'radio' && input.checked) {
+                            value = input.value;
+                            isSelected = true;
+                        } else if (input.type === 'checkbox' && input.checked) {
+                            value = input.value; // Or some other representation like "Yes"
+                            isSelected = true;
+                        } else if (input.tagName.toLowerCase() === 'select') {
+                            const selectedOptionTag = input.options[input.selectedIndex];
+                            if (selectedOptionTag && selectedOptionTag.value) { // Ensure it's not an empty/placeholder option
+                                value = selectedOptionTag.value;
+                                isSelected = true;
                             }
-                        } else if (optConfig.type === 'select') {
-                            element = document.querySelector(`select[data-option-name="${optConfig.name}"]`);
-                            if (element && element.value) {
-                                value = element.value;
-                                optionDisplayName = element.dataset.optionName;
-                            }
                         }
-                        
-                        if (value) {
-                            message += `*${optionDisplayName}:* ${value}\n`;
-                            processedOptionNames.push(optionDisplayName);
-                        }
-                    });
 
-                    // Handle dynamic Wood/Mould Size Dropdown
-                    const dynamicFrameSizeContainer = document.getElementById('dynamicFrameSizeDropdownContainer');
-                    if (dynamicFrameSizeContainer && dynamicFrameSizeContainer.style.display !== 'none') {
-                        const woodSizeSelect = dynamicFrameSizeContainer.querySelector('select[name="wood_size"]');
-                        const mouldSizeSelect = dynamicFrameSizeContainer.querySelector('select[name="mould_size"]');
-
-                        if (woodSizeSelect && woodSizeSelect.value) {
-                            const optionName = woodSizeSelect.dataset.optionName || 'Wood Size';
-                            message += `*${optionName}:* ${woodSizeSelect.value}\n`;
-                            processedOptionNames.push(optionName);
-                        } else if (mouldSizeSelect && mouldSizeSelect.value) {
-                            const optionName = mouldSizeSelect.dataset.optionName || 'Mould Size';
-                            message += `*${optionName}:* ${mouldSizeSelect.value}\n`;
-                            processedOptionNames.push(optionName);
-                        }
-                    }
-                    
-                    // Collect any 'Other' options (radios and checkboxes not already processed)
-                    // This ensures options not in the predefined order are still captured.
-                    // Radios:
-                    const otherRadios = document.querySelectorAll('.option-radio:checked');
-                    otherRadios.forEach(radio => {
-                        const optionName = radio.dataset.optionName;
-                        if (!processedOptionNames.includes(optionName)) {
-                            message += `*${optionName}:* ${radio.value}\n`;
-                            processedOptionNames.push(optionName); 
-                        }
-                    });
-                    // Checkboxes:
-                    const otherCheckboxes = document.querySelectorAll('.option-checkbox:checked');
-                    otherCheckboxes.forEach(checkbox => {
-                        const optionName = checkbox.dataset.optionName;
-                        if (!processedOptionNames.includes(optionName) || checkbox.name.endsWith('[]')) { 
-                            message += `*${optionName}:* ${checkbox.value}\n`;
+                        if (isSelected && !processedOptionNames.has(optionName)) {
+                            message += `*${optionName}:* ${value}\n`;
+                            processedOptionNames.add(optionName);
                         }
                     });
                     
-                    message += `\n*Price:* ₹${productPrice}\n\n`; 
+                    message += `\n*Price:* ${currentPriceText}\n\n`;
                     message += `I'd like to know more and proceed with this order.`;
                     
-                    // Encode the entire message string before sending
                     window.open(`https://wa.me/919043011295?text=${encodeURIComponent(message)}`, '_blank');
                 });
             }
 
-            // Show more/less for product description
-            const descriptionArea = document.getElementById('productDescriptionArea');
-            if (descriptionArea) {
-                descriptionArea.classList.add('description-truncated');
-                const isOverflowing = descriptionArea.scrollHeight > descriptionArea.clientHeight;
-
-                if (isOverflowing) {
-                    const toggleLink = document.createElement('a');
-                    toggleLink.href = '#'; 
-                    toggleLink.id = 'toggleDescription';
-                    toggleLink.classList.add('description-toggle');
-                    toggleLink.textContent = 'Show more';
-
-                    if (descriptionArea.parentNode) {
-                         descriptionArea.parentNode.insertBefore(toggleLink, descriptionArea.nextSibling);
-                    }
-
-                    toggleLink.addEventListener('click', function(event) {
-                        event.preventDefault(); 
-                        if (descriptionArea.classList.contains('description-truncated')) {
-                            descriptionArea.classList.remove('description-truncated');
-                            descriptionArea.classList.add('description-expanded');
-                            this.textContent = 'Show less';
-                        } else {
-                            descriptionArea.classList.remove('description-expanded');
-                            descriptionArea.classList.add('description-truncated');
-                            this.textContent = 'Show more';
-                        }
-                    });
-                } else {
-                    descriptionArea.classList.remove('description-truncated');
-                }
-            }
+            // Initial price calculation on page load
+            updateTotalPrice();
         });
     </script>
 </body>

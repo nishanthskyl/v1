@@ -168,47 +168,79 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             error_log("Attempt to delete file outside designated directory or invalid path: User provided=" . $_POST['delete_wall_of_love_image_name'] . ", Resolved=" . $filePathToDelete);
             $error = "Invalid file path or permission denied for deletion. File may not exist or path is incorrect.";
         }
-    } elseif (isset($_POST['add_product'])) { // Note: Changed to elseif
-        // Handle file upload
-        $targetDir = "uploads/";
-        $targetFile = $targetDir . basename($_FILES["image"]["name"]);
-        $uploadOk = 1;
-        $imageFileType = strtolower(pathinfo($targetFile, PATHINFO_EXTENSION));
+    } elseif (isset($_POST['add_product'])) {
+        // Insert product basic details (without image_path)
+        $stmt = $pdo->prepare("INSERT INTO products (name, description, price, category_id) VALUES (?, ?, ?, ?)");
+        $stmt->execute([
+            $_POST['name'],
+            $_POST['description'],
+            $_POST['price'],
+            $_POST['category_id']
+        ]);
+        $productId = $pdo->lastInsertId();
+        $success = "Product details added successfully. ";
 
-        // Check if image file is a actual image or fake image
-        $check = getimagesize($_FILES["image"]["tmp_name"]);
-        if ($check === false) {
-            $error = "File is not an image.";
-            $uploadOk = 0;
+        // Handle multiple image uploads
+        if (isset($_FILES['images'])) {
+            $targetDir = "uploads/";
+            $imagesUploadedCount = 0;
+            $isFirstImage = true; // To set the first uploaded image as primary
+
+            for ($i = 0; $i < count($_FILES['images']['name']); $i++) {
+                if ($_FILES['images']['error'][$i] === UPLOAD_ERR_OK) {
+                    $originalFileName = basename($_FILES["images"]["name"][$i]);
+                    // Sanitize filename
+                    $safeFileName = preg_replace("/[^a-zA-Z0-9._-]/", "_", $originalFileName);
+                    if (empty($safeFileName) || $safeFileName === '.' || $safeFileName === '..') {
+                        $error .= "Invalid image filename after sanitization: " . htmlspecialchars($originalFileName) . ". ";
+                        continue;
+                    }
+
+                    $targetFile = $targetDir . $safeFileName;
+                    $imageFileType = strtolower(pathinfo($targetFile, PATHINFO_EXTENSION));
+
+                    // Basic check for common web image types
+                    $allowedExtensions = ["jpg", "jpeg", "png", "gif", "webp"];
+                    if (!in_array($imageFileType, $allowedExtensions)) {
+                        $error .= "File '" . htmlspecialchars($safeFileName) . "' is not an allowed image type (JPG, JPEG, PNG, GIF, WEBP). ";
+                        continue;
+                    }
+
+                    // Prevent overwriting by appending a number if necessary
+                    $counter = 0;
+                    $tempTargetFile = $targetFile;
+                    while (file_exists($tempTargetFile)) {
+                        $counter++;
+                        $fileNameWithoutExt = pathinfo($safeFileName, PATHINFO_FILENAME);
+                        $tempTargetFile = $targetDir . $fileNameWithoutExt . "_" . $counter . "." . $imageFileType;
+                    }
+                    $targetFile = $tempTargetFile;
+                    $finalFileNameForDb = basename($targetFile);
+
+
+                    if (move_uploaded_file($_FILES["images"]["tmp_name"][$i], $targetFile)) {
+                        $stmtImage = $pdo->prepare("INSERT INTO product_images (product_id, image_path, is_primary, display_order) VALUES (?, ?, ?, ?)");
+                        $stmtImage->execute([$productId, $finalFileNameForDb, $isFirstImage ? 1 : 0, $imagesUploadedCount]);
+
+                        $imagesUploadedCount++;
+                        $isFirstImage = false; // Only the very first successful upload is primary
+                    } else {
+                        $error .= "Error uploading file '" . htmlspecialchars($safeFileName) . "'. ";
+                    }
+                } elseif ($_FILES['images']['error'][$i] !== UPLOAD_ERR_NO_FILE) {
+                    $error .= "Error with file '" . htmlspecialchars($_FILES["images"]["name"][$i]) . "': error code " . $_FILES['images']['error'][$i] . ". ";
+                }
+            }
+            if ($imagesUploadedCount > 0) {
+                $success .= "$imagesUploadedCount image(s) uploaded successfully.";
+            } elseif (empty($error)) { // No files were selected, but no error occurred.
+                 // $success .= "No images were uploaded for the product."; // Or just keep silent
+            }
+        } else {
+             $success .= "No images provided or error in file data. ";
         }
 
-        // Check file size (5MB max)
-        if ($_FILES["image"]["size"] > 9000000) {
-            $error = "Sorry, your file is too large.";
-            $uploadOk = 0;
-        }
-
-        // Allow certain file formats
-        if (!in_array($imageFileType, ["jpg", "jpeg", "png", "gif"])) {
-            $error = "Sorry, only JPG, JPEG, PNG & GIF files are allowed.";
-            $uploadOk = 0;
-        }
-
-        if ($uploadOk == 1) {
-            if (move_uploaded_file($_FILES["image"]["tmp_name"], $targetFile)) {
-                // Insert product
-                $stmt = $pdo->prepare("INSERT INTO products (name, description, price, image_path, category_id) VALUES (?, ?, ?, ?, ?)");
-                $stmt->execute([
-                    $_POST['name'],
-                    $_POST['description'],
-                    $_POST['price'],
-                    $targetFile,
-                    $_POST['category_id']
-                ]);
-
-                $productId = $pdo->lastInsertId();
-
-                // Assign selected options to product and set their value states
+        // Assign selected options to product and set their value states (This part remains largely the same)
                 if (isset($_POST['options'])) {
                     foreach ($_POST['options'] as $optionId) {
                         // Assign option to product
@@ -235,11 +267,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // This part is more relevant for product editing.
                 }
 
-                $success = "Product added successfully!";
-            } else {
-                $error = "Sorry, there was an error uploading your file.";
-            }
-        }
+                // $success variable is now built incrementally.
+                // Ensure $error is checked before claiming full success.
+                if (!empty($error)) {
+                    // If there were errors, make sure the overall message reflects that.
+                    // $success might still indicate partial success (product details added).
+                    // The messages $error and $success will be displayed.
+                } else if ($imagesUploadedCount == 0 && count($_FILES['images']['name']) > 0 && $_FILES['images']['error'][0] != UPLOAD_ERR_NO_FILE){
+                    // This case means files were selected, but none uploaded successfully.
+                    $error = "Product details added, but no images could be uploaded due to errors mentioned above.";
+                } else if ($imagesUploadedCount == 0 && (count($_FILES['images']['name']) == 0 || $_FILES['images']['error'][0] == UPLOAD_ERR_NO_FILE) ){
+                     $success .= "No images were selected for upload.";
+                }
+            } // This closing brace was for the old $uploadOk == 1, which is removed.
+        // The new structure handles errors and success messages within the loop or after.
+        // The final $success and $error messages will be displayed.
     } elseif (isset($_POST['delete_product'])) {
         $stmt = $pdo->prepare("DELETE FROM products WHERE id = ?");
         $stmt->execute([$_POST['product_id']]);
@@ -255,73 +297,159 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $optionId = $pdo->lastInsertId();
 
-        // Add option values
-        if (isset($_POST['option_values'])) {
-            foreach ($_POST['option_values'] as $value) {
-                if (!empty(trim($value))) {
-                    $stmt = $pdo->prepare("INSERT INTO option_values (option_id, value) VALUES (?, ?)");
-                    $stmt->execute([$optionId, trim($value)]);
+        // Add option values with price modifiers
+        if (isset($_POST['option_value_text']) && is_array($_POST['option_value_text'])) {
+            $valueTexts = $_POST['option_value_text'];
+            $valueModifiers = $_POST['option_value_modifier'] ?? []; // Default to empty array if not set
+
+            for ($i = 0; $i < count($valueTexts); $i++) {
+                $text = trim($valueTexts[$i]);
+                if (!empty($text)) {
+                    // Ensure modifier is a valid decimal, default to 0.00 if not
+                    $modifier = isset($valueModifiers[$i]) && is_numeric($valueModifiers[$i])
+                                ? floatval($valueModifiers[$i])
+                                : 0.00;
+
+                    // Format modifier to ensure two decimal places for storage
+                    $formattedModifier = number_format($modifier, 2, '.', '');
+
+                    $stmtValue = $pdo->prepare("INSERT INTO option_values (option_id, value, price_modifier, display_order) VALUES (?, ?, ?, ?)");
+                    // Assuming display_order for values is just their sequence for now
+                    $stmtValue->execute([$optionId, $text, $formattedModifier, $i]);
                 }
             }
         }
-
-        $success = "Option added successfully!";
+        $success = "Option and its values added successfully!";
     } elseif (isset($_POST['update_product'])) {
         $productIdToUpdate = $_POST['product_id'];
+        $uploadOk = 1; // Assume okay initially for non-image parts
 
-        // Handle file upload if a new image is provided
-        $imagePath = $_POST['current_image_path']; // Keep current if not updated
-        if (isset($_FILES["image"]) && $_FILES["image"]["error"] == 0 && !empty($_FILES["image"]["name"])) {
+        // 1. Handle Image Deletions
+        if (!empty($_POST['delete_images'])) {
             $targetDir = "uploads/";
-            $targetFile = $targetDir . basename($_FILES["image"]["name"]);
-            $uploadOk = 1;
-            $imageFileType = strtolower(pathinfo($targetFile, PATHINFO_EXTENSION));
+            foreach ($_POST['delete_images'] as $imageIdToDelete) {
+                $imageFilenameToDelete = $_POST['image_filenames'][$imageIdToDelete] ?? null;
+                if ($imageFilenameToDelete) {
+                    // Delete from product_images table
+                    $stmtDelete = $pdo->prepare("DELETE FROM product_images WHERE id = ? AND product_id = ?");
+                    $stmtDelete->execute([$imageIdToDelete, $productIdToUpdate]);
 
-            $check = getimagesize($_FILES["image"]["tmp_name"]);
-            if ($check === false) {
-                $error = "File is not an image.";
-                $uploadOk = 0;
-            }
-            if ($_FILES["image"]["size"] > 5000000) { // 5MB
-                $error = "Sorry, your file is too large.";
-                $uploadOk = 0;
-            }
-            if (!in_array($imageFileType, ["jpg", "jpeg", "png", "gif"])) {
-                $error = "Sorry, only JPG, JPEG, PNG & GIF files are allowed.";
-                $uploadOk = 0;
-            }
-
-            if ($uploadOk == 1) {
-                if (move_uploaded_file($_FILES["image"]["tmp_name"], $targetFile)) {
-                    $imagePath = $targetFile;
-                    // Optionally, delete the old image if it's different and no other product uses it.
-                } else {
-                    $error = "Sorry, there was an error uploading your new file.";
-                    $uploadOk = 0; // Prevent further processing if image upload failed
+                    // Delete file from server
+                    $filePath = $targetDir . $imageFilenameToDelete;
+                    if (file_exists($filePath) && is_writable($filePath)) {
+                        unlink($filePath);
+                        $success .= "Image " . htmlspecialchars($imageFilenameToDelete) . " deleted. ";
+                    } else {
+                        $error .= "Could not delete file " . htmlspecialchars($imageFilenameToDelete) . " from server (not found or permission issue). ";
+                    }
                 }
             }
-        } else {
-            // No new file uploaded or file upload error not critical (e.g. no file given)
-            // $imagePath remains the current_image_path or will be updated if it was empty
-             $stmt = $pdo->prepare("SELECT image_path FROM products WHERE id = ?");
-             $stmt->execute([$productIdToUpdate]);
-             $imagePath = $stmt->fetchColumn();
         }
 
+        // 2. Handle Primary Image Change
+        if (isset($_POST['primary_image_id'])) {
+            $newPrimaryImageId = $_POST['primary_image_id'];
+            // Set all images for this product to is_primary = 0
+            $stmtClearPrimary = $pdo->prepare("UPDATE product_images SET is_primary = 0 WHERE product_id = ?");
+            $stmtClearPrimary->execute([$productIdToUpdate]);
+            // Set the selected image to is_primary = 1
+            $stmtSetPrimary = $pdo->prepare("UPDATE product_images SET is_primary = 1 WHERE id = ? AND product_id = ?");
+            $stmtSetPrimary->execute([$newPrimaryImageId, $productIdToUpdate]);
+            $success .= "Primary image updated. ";
+        }
 
-        if (!isset($error) || $uploadOk == 1) { // Proceed if no critical error
-            // Update product details
-            $stmt = $pdo->prepare("UPDATE products SET name = ?, description = ?, price = ?, image_path = ?, category_id = ? WHERE id = ?");
+        // 3. Handle New Image Uploads
+        if (isset($_FILES['new_images'])) {
+            $targetDir = "uploads/";
+            $newImagesUploadedCount = 0;
+
+            // Determine current max display_order for this product
+            $stmtMaxOrder = $pdo->prepare("SELECT MAX(display_order) FROM product_images WHERE product_id = ?");
+            $stmtMaxOrder->execute([$productIdToUpdate]);
+            $currentMaxOrder = $stmtMaxOrder->fetchColumn();
+            $nextDisplayOrder = ($currentMaxOrder === null) ? 0 : $currentMaxOrder + 1;
+
+            for ($i = 0; $i < count($_FILES['new_images']['name']); $i++) {
+                if ($_FILES['new_images']['error'][$i] === UPLOAD_ERR_OK) {
+                    $originalFileName = basename($_FILES["new_images"]["name"][$i]);
+                    $safeFileName = preg_replace("/[^a-zA-Z0-9._-]/", "_", $originalFileName);
+                     if (empty($safeFileName) || $safeFileName === '.' || $safeFileName === '..') {
+                        $error .= "Invalid new image filename: " . htmlspecialchars($originalFileName) . ". ";
+                        continue;
+                    }
+
+                    $targetFile = $targetDir . $safeFileName;
+                    $imageFileType = strtolower(pathinfo($targetFile, PATHINFO_EXTENSION));
+                    $allowedExtensions = ["jpg", "jpeg", "png", "gif", "webp"];
+
+                    if (!in_array($imageFileType, $allowedExtensions)) {
+                        $error .= "New file '" . htmlspecialchars($safeFileName) . "' is not an allowed image type. ";
+                        continue;
+                    }
+
+                    $counter = 0;
+                    $tempTargetFile = $targetFile;
+                    while (file_exists($tempTargetFile)) {
+                        $counter++;
+                        $fileNameWithoutExt = pathinfo($safeFileName, PATHINFO_FILENAME);
+                        $tempTargetFile = $targetDir . $fileNameWithoutExt . "_" . $counter . "." . $imageFileType;
+                    }
+                    $targetFile = $tempTargetFile;
+                    $finalFileNameForDb = basename($targetFile);
+
+                    if (move_uploaded_file($_FILES["new_images"]["tmp_name"][$i], $targetFile)) {
+                        // Check if there are NO images currently for this product. If so, make this new one primary.
+                        $stmtCheckExistingImages = $pdo->prepare("SELECT COUNT(*) FROM product_images WHERE product_id = ?");
+                        $stmtCheckExistingImages->execute([$productIdToUpdate]);
+                        $hasExistingImages = $stmtCheckExistingImages->fetchColumn() > 0;
+
+                        // If after deletions, no primary is set, or if no images existed, make the first new one primary.
+                        $isNewPrimary = false;
+                        if (!$hasExistingImages && $newImagesUploadedCount == 0) { // First new image and no prior images
+                             $isNewPrimary = true;
+                        } else {
+                            // Check if a primary image still exists after potential deletions
+                            $stmtCheckPrimary = $pdo->prepare("SELECT COUNT(*) FROM product_images WHERE product_id = ? AND is_primary = 1");
+                            $stmtCheckPrimary->execute([$productIdToUpdate]);
+                            if ($stmtCheckPrimary->fetchColumn() == 0 && $newImagesUploadedCount == 0) {
+                                $isNewPrimary = true; // No primary exists, make this new one primary
+                            }
+                        }
+
+                        $stmtImage = $pdo->prepare("INSERT INTO product_images (product_id, image_path, is_primary, display_order) VALUES (?, ?, ?, ?)");
+                        $stmtImage->execute([$productIdToUpdate, $finalFileNameForDb, $isNewPrimary ? 1 : 0, $nextDisplayOrder]);
+
+                        $newImagesUploadedCount++;
+                        $nextDisplayOrder++;
+                    } else {
+                        $error .= "Error uploading new file '" . htmlspecialchars($safeFileName) . "'. ";
+                        $uploadOk = 0; // Mark that an error occurred
+                    }
+                } elseif ($_FILES['new_images']['error'][$i] !== UPLOAD_ERR_NO_FILE) {
+                     $error .= "Error with new file '" . htmlspecialchars($_FILES["new_images"]["name"][$i]) . "': error code " . $_FILES['new_images']['error'][$i] . ". ";
+                     $uploadOk = 0;
+                }
+            }
+            if ($newImagesUploadedCount > 0) {
+                $success .= "$newImagesUploadedCount new image(s) uploaded. ";
+            }
+        }
+
+        // Update product basic details (name, description, price, category_id)
+        // This part is now independent of the old single image path logic.
+        if ($uploadOk) { // Proceed if new image uploads (if any) were okay or no new images attempted
+            $stmt = $pdo->prepare("UPDATE products SET name = ?, description = ?, price = ?, category_id = ? WHERE id = ?");
             $stmt->execute([
                 $_POST['name'],
                 $_POST['description'],
                 $_POST['price'],
-                $imagePath,
+                // $imagePath, // This line is removed, no more single image_path in products table
                 $_POST['category_id'],
                 $productIdToUpdate
             ]);
+            $success .= "Product details updated. ";
 
-            // Clear existing option assignments and value settings for this product
+            // Clear existing option assignments and value settings for this product (same as before)
             $stmtDelAssignments = $pdo->prepare("DELETE FROM product_option_assignments WHERE product_id = ?");
             $stmtDelAssignments->execute([$productIdToUpdate]);
 
@@ -358,7 +486,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // Get all products
-$products = $pdo->query("SELECT p.*, c.name as category_name FROM products p JOIN categories c ON p.category_id = c.id")->fetchAll(PDO::FETCH_ASSOC);
+$productsStmt = $pdo->query("
+    SELECT p.*, c.name as category_name, pi.image_path as primary_image_path
+    FROM products p
+    JOIN categories c ON p.category_id = c.id
+    LEFT JOIN product_images pi ON p.id = pi.product_id AND pi.is_primary = 1
+    ORDER BY p.id DESC
+");
+$products = $productsStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get all categories
 $categories = $pdo->query("SELECT * FROM categories WHERE parent_id IS NOT NULL")->fetchAll(PDO::FETCH_ASSOC);
@@ -465,7 +600,10 @@ $productOptions = $optionsWithValues; // Replace original $productOptions with t
                                     <?php foreach ($products as $product): ?>
                                         <tr>
                                             <td><?= $product['id'] ?></td>
-                                            <td><img src="<?= htmlspecialchars($product['image_path']) ?>" alt="<?= htmlspecialchars($product['name']) ?>" class="product-image"></td>
+                                            <td>
+                                                <img src="<?= htmlspecialchars($product['primary_image_path'] ? 'uploads/' . $product['primary_image_path'] : 'uploads/placeholder.png') ?>"
+                                                     alt="<?= htmlspecialchars($product['name']) ?>" class="product-image">
+                                            </td>
                                             <td><?= htmlspecialchars($product['name']) ?></td>
                                             <td><?= htmlspecialchars($product['category_name']) ?></td>
                                             <td><?= htmlspecialchars($product['price']) ?></td>
@@ -503,6 +641,11 @@ $productOptions = $optionsWithValues; // Replace original $productOptions with t
                         $productToEdit = $stmt->fetch(PDO::FETCH_ASSOC);
 
                         if ($productToEdit) {
+                            // Fetch existing images for this product
+                            $stmtProductImages = $pdo->prepare("SELECT * FROM product_images WHERE product_id = ? ORDER BY display_order ASC, is_primary DESC");
+                            $stmtProductImages->execute([$productIdToEdit]);
+                            $productImagesToEdit = $stmtProductImages->fetchAll(PDO::FETCH_ASSOC);
+
                             // Fetch assigned options
                             $stmt = $pdo->prepare("SELECT option_id FROM product_option_assignments WHERE product_id = ?");
                             $stmt->execute([$productIdToEdit]);
@@ -554,14 +697,51 @@ $productOptions = $optionsWithValues; // Replace original $productOptions with t
                                     <?php endforeach; ?>
                                 </select>
                             </div>
+
+                            <?php if (!$editMode): // Only show this for adding new product ?>
                             <div class="mb-3">
-                                <label for="image" class="form-label">Product Image <?= $editMode ? '(leave empty to keep current image)' : '' ?></label>
-                                <input type="file" class="form-control" id="image" name="image" accept="image/*" <?= $editMode ? '' : 'required' ?>>
-                                <?php if ($editMode && $productToEdit['image_path']): ?>
-                                    <input type="hidden" name="current_image_path" value="<?= htmlspecialchars($productToEdit['image_path']) ?>">
-                                    <img src="<?= htmlspecialchars($productToEdit['image_path']) ?>" alt="Current Image" class="mt-2" style="max-width: 100px;">
+                                <label for="images" class="form-label">Product Images</label>
+                                <input type="file" class="form-control" id="images" name="images[]" multiple accept="image/*">
+                                <div class="form-text">You can select multiple images. The first selected image will be set as primary.</div>
+                            </div>
+                            <?php endif; ?>
+
+                            <?php if ($editMode && $productToEdit): ?>
+                            <div class="mb-3">
+                                <label class="form-label">Manage Existing Images</label>
+                                <?php if (!empty($productImagesToEdit)): ?>
+                                    <div class="row">
+                                        <?php foreach ($productImagesToEdit as $img): ?>
+                                            <div class="col-md-3 text-center mb-4 p-2 border rounded me-2">
+                                                <img src="uploads/<?= htmlspecialchars($img['image_path']) ?>" class="img-thumbnail mb-2" style="max-width: 120px; max-height: 120px; object-fit: cover;">
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="radio" name="primary_image_id" id="primary_<?= $img['id'] ?>" value="<?= $img['id'] ?>" <?= $img['is_primary'] ? 'checked' : '' ?>>
+                                                    <label class="form-check-label" style="font-size: 0.9em;" for="primary_<?= $img['id'] ?>">Set Primary</label>
+                                                </div>
+                                                <div class="form-check mt-1">
+                                                    <input class="form-check-input" type="checkbox" name="delete_images[]" id="delete_<?= $img['id'] ?>" value="<?= $img['id'] ?>">
+                                                    <label class="form-check-label" style="font-size: 0.9em; color: #dc3545;" for="delete_<?= $img['id'] ?>">Delete</label>
+                                                </div>
+                                                <input type="hidden" name="image_filenames[<?= $img['id'] ?>]" value="<?= htmlspecialchars($img['image_path']) ?>">
+                                                <?php /* Display order input - optional for now
+                                                <div class="mt-1">
+                                                    <input type="number" name="display_order[<?= $img['id'] ?>]" value="<?= htmlspecialchars($img['display_order']) ?>" class="form-control form-control-sm" title="Order" style="width: 70px; margin: auto;">
+                                                </div>
+                                                */ ?>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
+                                <?php else: ?>
+                                    <p>No images currently associated with this product.</p>
                                 <?php endif; ?>
                             </div>
+                            <div class="mb-3">
+                                <label for="new_images" class="form-label">Upload New Images</label>
+                                <input type="file" class="form-control" id="new_images" name="new_images[]" multiple accept="image/*">
+                                <div class="form-text">Add more images to this product.</div>
+                            </div>
+                            <?php endif; ?>
+
                             <div class="mb-3">
                                 <label class="form-label">Product Options</label>
                                 <?php foreach ($productOptions as $option): 
@@ -591,6 +771,12 @@ $productOptions = $optionsWithValues; // Replace original $productOptions with t
                                                     <input class="form-check-input" type="checkbox" name="option_value_enabled[<?= $option['id'] ?>][<?= $value['id'] ?>]" id="option_value_<?= $option['id'] ?>_<?= $value['id'] ?>" value="1" <?= $valueIsEnabled ? 'checked' : '' ?>>
                                                     <label class="form-check-label" for="option_value_<?= $option['id'] ?>_<?= $value['id'] ?>">
                                                         <?= htmlspecialchars($value['value']) ?>
+                                                        <?php
+                                                        if (isset($value['price_modifier']) && $value['price_modifier'] != 0) {
+                                                            $modifier = floatval($value['price_modifier']);
+                                                            echo " (" . ($modifier > 0 ? '+' : '') . htmlspecialchars(number_format($modifier, 2)) . ")";
+                                                        }
+                                                        ?>
                                                     </label>
                                                 </div>
                                             <?php endforeach; ?>
@@ -662,6 +848,7 @@ $productOptions = $optionsWithValues; // Replace original $productOptions with t
                                         <option value="dropdown">Dropdown</option>
                                         <option value="radio">Radio Button</option>
                                         <option value="checkbox">Checkbox</option>
+                                        <!-- <option value="text">Text Input</option> -->
                                     </select>
                                 </div>
                                 <div class="col-md-2">
@@ -676,11 +863,57 @@ $productOptions = $optionsWithValues; // Replace original $productOptions with t
                                 </div>
                             </div>
                             <div class="mb-3">
-                                <label class="form-label">Option Values (one per line, leave empty for text input)</label>
-                                <textarea class="form-control" name="option_values" rows="5" placeholder="Enter one value per line"></textarea>
+                                <label class="form-label">Option Values</label>
+                                <div id="option-values-container">
+                                    <div class="row option-value-row mb-2">
+                                        <div class="col-md-5">
+                                            <input type="text" name="option_value_text[]" class="form-control" placeholder="Value Text">
+                                        </div>
+                                        <div class="col-md-5">
+                                            <input type="number" step="0.01" name="option_value_modifier[]" class="form-control" placeholder="Price Modifier (e.g., 5.00 or -2.50)">
+                                        </div>
+                                        <div class="col-md-2">
+                                            <button type="button" class="btn btn-danger btn-sm remove-option-value-row" style="display:none;">Remove</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button type="button" id="add-option-value-row" class="btn btn-secondary btn-sm mt-2">Add Another Value</button>
                             </div>
                             <button type="submit" name="add_option" class="btn btn-primary">Add Option</button>
                         </form>
+                        <script>
+                        document.addEventListener('DOMContentLoaded', function() {
+                            const container = document.getElementById('option-values-container');
+                            const addRowButton = document.getElementById('add-option-value-row');
+
+                            function updateRemoveButtons() {
+                                const rows = container.querySelectorAll('.option-value-row');
+                                rows.forEach((row, index) => {
+                                    const removeButton = row.querySelector('.remove-option-value-row');
+                                    if(removeButton) { // Make sure button exists
+                                       removeButton.style.display = rows.length > 1 ? 'inline-block' : 'none';
+                                    }
+                                });
+                            }
+
+                            addRowButton.addEventListener('click', function() {
+                                const newRow = container.querySelector('.option-value-row').cloneNode(true);
+                                newRow.querySelectorAll('input').forEach(input => input.value = '');
+                                container.appendChild(newRow);
+                                updateRemoveButtons();
+                            });
+
+                            container.addEventListener('click', function(e) {
+                                if (e.target.classList.contains('remove-option-value-row')) {
+                                    if (container.querySelectorAll('.option-value-row').length > 1) {
+                                        e.target.closest('.option-value-row').remove();
+                                        updateRemoveButtons();
+                                    }
+                                }
+                            });
+                            updateRemoveButtons(); // Initial check
+                        });
+                        </script>
 
                         <h3 class="mt-5">Existing Options</h3>
                         <div class="table-responsive">
@@ -697,9 +930,20 @@ $productOptions = $optionsWithValues; // Replace original $productOptions with t
                                 </thead>
                                 <tbody>
                                     <?php foreach ($productOptions as $option): 
-                                        $values = $pdo->prepare("SELECT value FROM option_values WHERE option_id = ?");
-                                        $values->execute([$option['id']]);
-                                        $optionValues = $values->fetchAll(PDO::FETCH_COLUMN);
+                                        // Fetch values with their price modifiers
+                                        $valuesStmt = $pdo->prepare("SELECT value, price_modifier FROM option_values WHERE option_id = ? ORDER BY display_order");
+                                        $valuesStmt->execute([$option['id']]);
+                                        $optionValuesWithModifiers = $valuesStmt->fetchAll(PDO::FETCH_ASSOC);
+
+                                        $valueStrings = [];
+                                        foreach ($optionValuesWithModifiers as $ov) {
+                                            $valStr = htmlspecialchars($ov['value']);
+                                            if (isset($ov['price_modifier']) && $ov['price_modifier'] != 0) {
+                                                $modifier = floatval($ov['price_modifier']);
+                                                $valStr .= " (" . ($modifier > 0 ? '+' : '') . htmlspecialchars(number_format($modifier, 2)) . ")";
+                                            }
+                                            $valueStrings[] = $valStr;
+                                        }
                                     ?>
                                         <tr>
                                             <td><?= $option['id'] ?></td>
@@ -707,7 +951,7 @@ $productOptions = $optionsWithValues; // Replace original $productOptions with t
                                             <td><?= ucfirst($option['option_type']) ?></td>
                                             <td><?= $option['is_required'] ? 'Yes' : 'No' ?></td>
                                             <td><?= $option['display_order'] ?></td>
-                                            <td><?= implode(', ', array_map('htmlspecialchars', $optionValues)) ?></td>
+                                            <td><?= implode(', ', $valueStrings) ?></td>
                                         </tr>
                                     <?php endforeach; ?>
                                 </tbody>

@@ -30,6 +30,17 @@ $pdo->exec("
         FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
     );
 
+    ALTER TABLE products DROP COLUMN IF EXISTS image_path;
+
+    CREATE TABLE IF NOT EXISTS product_images (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        product_id INT NOT NULL,
+        image_path VARCHAR(255) NOT NULL,
+        is_primary BOOLEAN DEFAULT FALSE,
+        display_order INT DEFAULT 0,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS product_options (
         id INT AUTO_INCREMENT PRIMARY KEY,
         product_id INT NOT NULL,
@@ -66,6 +77,19 @@ $pdo->exec("
         UNIQUE (product_id, option_value_id)
     );
 ");
+
+// Check and add price_modifier to option_values
+$stmtCheckPriceModifier = $pdo->prepare("
+    SELECT COUNT(*)
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = ?
+    AND TABLE_NAME = 'option_values'
+    AND COLUMN_NAME = 'price_modifier'
+");
+$stmtCheckPriceModifier->execute([$dbname]);
+if ($stmtCheckPriceModifier->fetchColumn() == 0) {
+    $pdo->exec("ALTER TABLE option_values ADD COLUMN price_modifier DECIMAL(10,2) DEFAULT 0.00 NOT NULL");
+}
 
 // Insert default categories if they don't exist
 $stmt = $pdo->query("SELECT COUNT(*) FROM categories");
