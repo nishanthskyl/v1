@@ -1,11 +1,11 @@
 <?php
-$host = 'sql107.infinityfree.com';
-$dbname = 'if0_39069958_test1';
-$username = 'if0_39069958';
-$password = 'ubScQ3khWRN';
+$host = 'localhost';
+$dbname = 'u140374155_happily';
+$username = 'u140374155_happilyyours';
+$password = '?KMpPMMK8rJFu4dkA&vqq5*FtW$';
 
 try {
-    $pdo = new PDO("mysql:host=$host;dbname=$dbname", $username, $password);
+    $pdo = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8mb4", $username, $password);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 } catch (PDOException $e) {
     die("Could not connect to the database: " . $e->getMessage());
