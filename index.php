@@ -133,28 +133,13 @@ $featuredProducts = $pdo->query("
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<!-- HTML Meta Tags -->
-<title>Happilyyours</title>
-<meta name="description" content="Handcrafted with Love">
-
-<!-- Facebook Meta Tags -->
-<meta property="og:url" content="https://happilyyours.in/">
-<meta property="og:type" content="website">
-<meta property="og:title" content="Happilyyours">
-<meta property="og:description" content="Handcrafted with Love">
-<meta property="og:image" content="https://happilyyours.in/happilyyours-logo_N.png">
-
-<!-- Twitter Meta Tags -->
-<meta name="twitter:card" content="summary_large_image">
-<meta property="twitter:domain" content="happilyyours.in">
-<meta property="twitter:url" content="https://happilyyours.in/">
-<meta name="twitter:title" content="Happilyyours">
-<meta name="twitter:description" content="Handcrafted with Love">
-<meta name="twitter:image" content="https://happilyyours.in/happilyyours-logo_N.png">
-
-<!-- WhatsApp Meta Tags -->
-
-
+<meta property="og:title" content="Happilyyours" />
+<meta property="og:description" content="Handcrafted with Love" />
+<meta property="og:image" content="<?php echo $og_image_url; ?>" />
+<meta property="og:image:width" content="400" />
+<meta property="og:image:height" content="400" />
+<meta property="og:url" content="<?php echo $og_url; ?>" />
+<meta property="og:type" content="website" />
     <title>Happilyyours</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
