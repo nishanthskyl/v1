@@ -132,6 +132,29 @@ $featuredProducts = $pdo->query("
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<!-- HTML Meta Tags -->
+<title>Happilyyours</title>
+<meta name="description" content="Handcrafted with Love">
+
+<!-- Facebook Meta Tags -->
+<meta property="og:url" content="https://happilyyours.in/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Happilyyours">
+<meta property="og:description" content="Handcrafted with Love">
+<meta property="og:image" content="https://happilyyours.in/happilyyours-logo_N.png">
+
+<!-- Twitter Meta Tags -->
+<meta name="twitter:card" content="summary_large_image">
+<meta property="twitter:domain" content="happilyyours.in">
+<meta property="twitter:url" content="https://happilyyours.in/">
+<meta name="twitter:title" content="Happilyyours">
+<meta name="twitter:description" content="Handcrafted with Love">
+<meta name="twitter:image" content="https://happilyyours.in/happilyyours-logo_N.png">
+
+<!-- WhatsApp Meta Tags -->
+
+
     <title>Happilyyours</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
@@ -181,13 +204,13 @@ $featuredProducts = $pdo->query("
 
         .navbar {
             background: transparent !important;
-            padding: 1rem 0;
+            padding: 0.5rem 0;
             border-bottom: 1px solid rgba(139, 69, 19, 0.1);
         }
 
         .navbar-brand {
             font-family: 'Playfair Display', serif;
-            font-size: 1.8rem;
+            font-size: 1.6rem;
             font-weight: 700;
             color: var(--brown-dark) !important;
             text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
@@ -795,39 +818,48 @@ $featuredProducts = $pdo->query("
     </style>
 </head>
 <body>
-    <!-- Navigation -->
-     <nav class="navbar navbar-expand-lg">
-        <div class="container">
-            <a class="navbar-brand" href="/">
-                <img src="https://yt3.googleusercontent.com/qD6aNz-NYU0dqau_9IKKvr7uAtZrIjQVTKyI59dX--oL8r5IQj5hjZ2iP_Ss9vN3LbOqdNhYS8Y=s72-c-k-c0x00ffffff-no-rj" 
-                     alt="Happilyyours Logo" 
-                     style="height: 40px; margin-right: 10px; border-radius: 50%;">
-                Happilyyours.Creators
-            </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse justify-content-end" id="navbarNav">
-                <ul class="navbar-nav">
-                    <li class="nav-item">
-                        <a class="nav-link" href="https://m.youtube.com/@Happilyyours.Creators" target="_blank">
-                            <i class="fab fa-youtube fa-lg" style="color: #FF0000;"></i>
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="https://wa.me/919043011295" target="_blank">
-                            <i class="fab fa-whatsapp fa-lg" style="color: #25D366;"></i>
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="https://www.instagram.com/happilyyours.creators" target="_blank">
-                            <i class="fab fa-instagram fa-lg" style="color: #E1306C;"></i>
-                        </a>
-                    </li>
-                </ul>
-            </div>
-        </div>
-    </nav>
+ <!-- Navigation -->
+<nav class="navbar navbar-expand-lg">
+  <div class="container">
+    <a class="navbar-brand" href="/">
+      <img src="/happilyyours-logo_N.png"
+           alt="Happilyyours Logo"
+           style="height: 80px; margin-right: 10px; border-radius: 60%;">
+      Happilyyours.Creators
+    </a>
+
+    <ul class="navbar-nav flex-row ms-lg-auto mx-auto mx-lg-0">
+      <li class="nav-item me-3">
+        <a class="nav-link" href="https://m.youtube.com/@Happilyyours.Creators" target="_blank">
+          <i class="fab fa-youtube fa-lg" style="color: #FF0000;"></i>
+        </a>
+      </li>
+      <li class="nav-item me-3">
+        <a class="nav-link" href="https://wa.me/919043011295" target="_blank">
+          <i class="fab fa-whatsapp fa-lg" style="color: #25D366;"></i>
+        </a>
+      </li>
+      <li class="nav-item me-3">
+        <a class="nav-link" href="https://www.instagram.com/happilyyours.creators" target="_blank">
+          <i class="fab fa-instagram fa-lg" style="color: #E1306C;"></i>
+        </a>
+      </li>
+      <li class="nav-item me-3">
+        <a class="nav-link" href="https://in.pinterest.com/happilyyourscreators" target="_blank">
+          <i class="fab fa-pinterest fa-lg" style="color: #BD081C;"></i>
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link" href="https://www.facebook.com/happilyyours.creators" target="_blank">
+          <i class="fab fa-facebook fa-lg" style="color: #3B5998;"></i>
+        </a>
+      </li>
+    </ul>
+  </div>
+</nav>
+
+
+
 
     <!-- Hero Section -->
     <div class="hero-section">
@@ -871,7 +903,7 @@ $featuredProducts = $pdo->query("
     <!-- Footer -->
     <footer class="text-white py-4">
         <div class="container text-center">
-            <p>&copy; <?= date('Y') ?> Happilyyours. All rights reserved.</p>
+            <p>&copy; <?= date('Y') ?>. Happilyyours.in .All rights reserved.</p>
         </div>
     </footer>
 
@@ -1262,3 +1294,4 @@ $featuredProducts = $pdo->query("
     <script src="https://cdn.jsdelivr.net/npm/@fancyapps/ui@5.0/dist/fancybox/fancybox.umd.js"></script>
 </body>
 </html>
+
