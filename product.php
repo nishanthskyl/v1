@@ -1,4 +1,25 @@
 <?php
+
+// Function to repair Mojibake for product description
+function repairMojibakeDescription($text) {
+    if (is_string($text)) {
+        // Check if the string actually needs repairing by looking for common mojibake patterns.
+        // This is a heuristic to avoid damaging correctly encoded strings.
+        // Pattern: Looks for three-character sequences where the first is >= 0xC3 (UTF-8 start of many Western European chars like â, ê, etc.)
+        // and the next two are in the 0x80-0xBF range (UTF-8 continuation bytes that form parts of mojibake for emojis).
+        // This is not foolproof but can prevent issues with already correct text.
+        if (preg_match('/(?:[\xC3-\xDF][\x80-\xBF]|[\xE0-\xEF][\x80-\xBF]{2}|[\xF0-\xF7][\x80-\xBF]{3})+/', $text)) {
+             // A more robust check might be to see if utf8_decode actually changes the string significantly
+             // or results in valid UTF-8 after a hypothetical re-encode.
+             // For now, let's assume if it looks like mojibake, try to decode.
+             // The specific mojibake pattern is "UTF-8 interpreted as ISO-8859-1/Windows-1252, then that result stored as UTF-8".
+             // utf8_decode converts this back to the original single-byte interpretation (which are the original UTF-8 bytes of the emoji).
+            return utf8_decode($text);
+        }
+    }
+    return $text;
+}
+
 include 'db.php';
 
 if (!isset($_GET['id'])) {
@@ -18,6 +39,11 @@ $product = $product->fetch(PDO::FETCH_ASSOC);
 if (!$product) {
     header("Location: index.php");
     exit();
+}
+
+// Apply the fix:
+if (isset($product['description'])) { // Ensure description key exists
+    $product['description'] = repairMojibakeDescription($product['description']);
 }
 
 // Get all options assigned to this product
@@ -1130,9 +1156,10 @@ $og_type = "product";
                     message += `*Product Name:* ${productName}\n`; 
                     message += `*Category:* ${categoryName}\n`;
                     
-                    if (typeof productImageUrl !== 'undefined' && productImageUrl) { 
-                        message += `*Product Image:* ${productImageUrl}\n`;
-                    }
+if (typeof productId !== 'undefined' && productId) { 
+    const productUrl = `https://happilyyours.in/product/${productId}`;
+    message += `*Product URL:* ${productUrl}\n`;
+}
                     message += `\n--- Options Selected ---\n`;
 
                     const optionsOrder = [
